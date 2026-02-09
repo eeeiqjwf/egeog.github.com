@@ -32,11 +32,18 @@ MANAGED_ROLES = [
 ]
 
 USER_MAPPING = {
-    1086571236160708709: "FunwithBg",
-    1157663612115107981: "Snipzy-AZ",
-    1444845857701630094: "Jay",
-    1458104862834167824: "Raccoon",
-    1210942252264857673: "RINGTA EMPIRE"
+    1086571236160708709: "FunwithBg",          # life4x
+    1157663612115107981: "Snipzy-AZ",          # .snipzy_ (discord), "Snipzy-AZ" (YouTube string)
+    1444845857701630094: "Jay",                # jiyansu
+    1458104862834167824: "Raccoon",            # zeki4life
+    1210942252264857673: "RINGTA EMPIRE"       # vsxwexe
+}
+DISCORD_USERNAMES = {
+    1086571236160708709: "life4x",
+    1157663612115107981: ".snipzy_",
+    1444845857701630094: "jiyansu",
+    1458104862834167824: "zeki4life",
+    1210942252264857673: "vsxwexe"
 }
 
 SPECIAL_QUOTA = {
@@ -89,14 +96,19 @@ def get_next_deadline():
 async def check_user_restoration(uid_str):
     global demoted_users
     if uid_str not in demoted_users:
+        print(f"[DEBUG] User {uid_str} not in demoted_users, skipping restoration.")
         return
     uid = int(uid_str)
     name = USER_MAPPING.get(uid)
-    if not name: return
+    if not name: 
+        print(f"[DEBUG] No name in USER_MAPPING for UID {uid}, skipping restoration.")
+        return
     track_channel = bot.get_channel(VIDEO_TRACK_CHANNEL_ID)
     if not track_channel:
         try: track_channel = await bot.fetch_channel(VIDEO_TRACK_CHANNEL_ID)
-        except: return
+        except: 
+            print(f"[DEBUG] Could not fetch track_channel {VIDEO_TRACK_CHANNEL_ID} (restoration).")
+            return
     deadline_utc = get_next_deadline()
     last_reset = deadline_utc - timedelta(days=1)
     guild = track_channel.guild
@@ -117,11 +129,14 @@ async def check_user_restoration(uid_str):
             if any(term in content.lower() for term in ["posted", "new video", "youtu.be", "youtube.com"]):
                 if not re.search(pattern, content, re.IGNORECASE):
                     new_count += 1
+    print(f"[DEBUG] Restoration check for {uid}: found {new_count} new (needed {data['missing']}).")
     if new_count >= data["missing"]:
         member = guild.get_member(uid)
         if not member:
             try: member = await guild.fetch_member(uid)
-            except: return
+            except: 
+                print(f"[DEBUG] Could not fetch member {uid} (restoration).")
+                return
         roles_to_add = [guild.get_role(rid) for rid in data["roles"] if guild.get_role(rid)]
         if roles_to_add:
             await member.add_roles(*roles_to_add)
@@ -201,20 +216,33 @@ async def run_demotion_check():
     guild = track_channel.guild
     demotion_details = []
     for uid, count in current_counts.items():
+        print(f"[DEBUG] Checking user: {uid} ({DISCORD_USERNAMES.get(uid,'?')}) -- count: {count}, required: {SPECIAL_QUOTA.get(uid, {'count': 3})['count']}")
         if str(uid) in demoted_users:
+            print(f"[DEBUG] Already demoted: {uid}")
             continue
         quota = SPECIAL_QUOTA.get(uid, {"count": 3})
         required = quota["count"]
         if count < required:
             member = guild.get_member(uid)
+            print(f"[DEBUG] member for uid {uid}: {member}")
             if not member:
-                try: member = await guild.fetch_member(uid)
-                except: continue
+                try: 
+                    member = await guild.fetch_member(uid)
+                    print(f"[DEBUG] fetched member: {member}")
+                except Exception as e:
+                    print(f"[DEBUG] Failed to fetch member: {e}")
+                    continue
+            member_role_ids = [r.id for r in member.roles]
+            print(f"[DEBUG] {uid} ({DISCORD_USERNAMES.get(uid,'?')}): member_role_ids: {member_role_ids}")
             roles_to_remove = [r.id for r in member.roles if r.id in MANAGED_ROLES]
+            print(f"[DEBUG] {uid}: roles_to_remove: {roles_to_remove} | MANAGED_ROLES: {MANAGED_ROLES}")
+            if not roles_to_remove:
+                print(f"[DEBUG] {uid} has no managed roles to remove!")
             if roles_to_remove:
                 roles_objects = [guild.get_role(rid) for rid in roles_to_remove if guild.get_role(rid)]
                 if roles_objects:
                     try:
+                        print(f"[DEBUG] Removing roles {roles_to_remove} from user {uid}")
                         await member.remove_roles(*roles_objects)
                         demoted_users[str(uid)] = {
                             "roles": roles_to_remove,
@@ -223,9 +251,10 @@ async def run_demotion_check():
                         save_demoted_data(demoted_users)
                         demotion_details.append(f"<@{uid}>: {count}/{required} videos")
                     except Exception as e:
-                        logging.error(f"Failed to demote user {uid}: {e}")
+                        print(f"[DEBUG] Failed to demote user {uid}: {e}")
     log_channel = bot.get_channel(REMINDER_CHANNEL_ID)
     if demotion_details and log_channel:
+        print(f"[DEBUG] Demoted users: {demotion_details}")
         msg = "**YESTERDAY videos posted:**\n" + "\n".join(demotion_details)
         msg += "\n\n⚠️ These users have been demoted. Upload your missing videos to get your roles back!"
         await log_channel.send(msg)
@@ -275,7 +304,6 @@ async def reminder_loop():
     if not track_channel:
         try: track_channel = await bot.fetch_channel(VIDEO_TRACK_CHANNEL_ID)
         except: return
-    # Today counts
     current_counts = {uid: 0 for uid in USER_MAPPING}
     async for msg in track_channel.history(limit=2000, after=period_start, before=now_utc):
         content = ""
@@ -293,7 +321,6 @@ async def reminder_loop():
                 if any(term in content.lower() for term in ["posted", "new video", "youtu.be", "youtube.com"]):
                      if not re.search(pattern, content, re.IGNORECASE):
                          current_counts[uid] += 1
-    # Yesterday counts
     yesterday_end_est = now_est.replace(hour=18, minute=0, second=0, microsecond=0)
     if now_est < yesterday_end_est:
         yesterday_end_est -= timedelta(days=1)
